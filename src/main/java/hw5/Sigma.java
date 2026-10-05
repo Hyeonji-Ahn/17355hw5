@@ -39,11 +39,114 @@ public class Sigma {
         }
     }
 
+    public static L signOfInt(int n){
+        if (n < 0){
+            return L.N;
+        }else if (n==0) {
+            return L.Z;
+        }else{
+            return L.P;
+        }
+    }
+
+    public static L add(L a, L b) {
+
+        if (a == L.Bottom || b == L.Bottom) {
+            return L.Bottom;
+        }
+
+        if (a == L.Z) {
+            return b;
+        }
+
+        if (b == L.Z) {
+            return a;
+        }
+
+        if (a == L.P && b == L.P) {
+            return L.P;
+        }
+
+        if (a == L.N && b == L.N) {
+            return L.N;
+        }
+
+        return L.Top;
+    }
+
+    public static L negate(L a) {
+
+        if (a == L.P) {
+            return L.N;
+        }
+
+        if (a == L.N) {
+            return L.P;
+        }
+
+        return a;
+    }
+
+    public static L sub(L a, L b) {
+        return add(a, negate(b));
+    }
+
+    public static L mul(L a, L b) {
+
+        if (a == L.Bottom || b == L.Bottom) {
+            return L.Bottom;
+        }
+
+        if (a == L.Z || b == L.Z) {
+            return L.Z;
+        }
+
+        if (a == L.Top || b == L.Top) {
+            return L.Top;
+        }
+
+        if (a == b) {
+            return L.P;
+        }
+
+        return L.N;
+    }
+
+    public static L div(L a, L b) {
+
+        if (a == L.Bottom || b == L.Bottom) {
+            return L.Bottom;
+        }
+
+        if (b == L.Z) {
+            return L.Top;
+        }
+
+        if (a == L.Z) {
+            return L.Z;
+        }
+
+        if (a == L.Top || b == L.Top) {
+            return L.Top;
+        }
+
+        return L.Top;
+    }
+
+
     /**
      * Join for two abstract values
      */
     public static L join(L v1, L v2) {
-        // TODO: Implement union
+        if (v1 == v2){
+            return v1;
+        }
+        if (v1 == L.Bottom){
+            return v2;
+        }
+        if (v2 == L.Bottom){
+            return v1;
+        }
         return L.Top;
     }
 
@@ -62,13 +165,20 @@ public class Sigma {
 
     @Override
     public boolean equals(Object obj) {
-        // TODO: Implement me!
-        return true;
+        if (this == obj){
+            return true;
+        }
+
+        if(! (obj instanceof Sigma)){
+            return false;
+        }
+
+        Sigma compto = (Sigma) obj;
+        return this.map.equals(compto.map);
     }
 
     @Override
     public int hashCode() {
-        // TODO: Implement me!
-        return 0;
+        return this.map.hashCode();
     }
 }

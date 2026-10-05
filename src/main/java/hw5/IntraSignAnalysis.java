@@ -11,10 +11,14 @@ import soot.toolkits.graph.MHGDominatorsFinder;
 import soot.toolkits.graph.UnitGraph;
 import soot.toolkits.scalar.ForwardFlowAnalysis;
 
+import soot.jimple.*;
+import soot.Value;
+
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BinaryOperator;
 
 public class IntraSignAnalysis extends ForwardFlowAnalysis<Unit, Sigma> {
     // Holds the set of local variables
@@ -53,6 +57,68 @@ public class IntraSignAnalysis extends ForwardFlowAnalysis<Unit, Sigma> {
         this.locals.addAll(graph.getBody().getLocals());
     }
 
+    private Sigma.L valueSign(Value value, Sigma sigma){
+        //in integer format. then convert
+        if (value instanceof IntConstant){
+            int n = ((IntConstant) value).value;
+            return Sigma.signOfInt(n);
+        }
+
+        //sign is already there. 
+        if(value instanceof Local){
+            Sigma.L sign = sigma.map.get((Local) value);
+
+            if (sign == null){
+                return Sigma.L.Top;
+            }
+
+            return sign;
+        }
+
+        //addition
+        if(value instanceof AddExpr){
+            BinopExpr expr = (BinopExpr) value;
+
+            Sigma.L left = valueSign(expr.getOp1(), sigma);
+            Sigma.L right = valueSign(expr.getOp2(), sigma);
+
+            return Sigma.add(left, right);
+        }
+
+        // Subtraction
+        if (value instanceof SubExpr) {
+            BinopExpr expr = (BinopExpr) value;
+
+            Sigma.L left = valueSign(expr.getOp1(), sigma);
+            Sigma.L right = valueSign(expr.getOp2(), sigma);
+
+            return Sigma.sub(left, right);
+        }
+
+        // Multiplication
+        if (value instanceof MulExpr) {
+            BinopExpr expr = (BinopExpr) value;
+
+            Sigma.L left = valueSign(expr.getOp1(), sigma);
+            Sigma.L right = valueSign(expr.getOp2(), sigma);
+
+            return Sigma.mul(left, right);
+        }
+
+        // Division
+        if (value instanceof DivExpr) {
+            BinopExpr expr = (BinopExpr) value;
+
+            Sigma.L left = valueSign(expr.getOp1(), sigma);
+            Sigma.L right = valueSign(expr.getOp2(), sigma);
+
+            return Sigma.div(left, right);
+        }
+
+        //default
+        return Sigma.L.Top;
+    }
+
     // Runs the analysis
     public void run() {
         this.doAnalysis();
@@ -66,11 +132,28 @@ public class IntraSignAnalysis extends ForwardFlowAnalysis<Unit, Sigma> {
         // TODO: This implementation is incorrect, but it shows how to report a warning
         for (Unit u : this.graph) {
             Sigma sigmaBefore = this.getFlowBefore(u); // TODO: Use this info to decide if a warning is appropriate
+            for (ValueBox v : u.getUseAndDefBoxes()){
+                Value val = v.getValue();
 
-            // Reports an error for a definite negative index
-            Utils.reportWarning(u, ErrorMessage.NEGATIVE_INDEX_ERROR);
-            // Reports a warning for a possible negative index
-            Utils.reportWarning(u, ErrorMessage.POSSIBLE_NEGATIVE_INDEX_WARNING);
+                if (!(val instanceof ArrayRef)){
+                    continue;
+                }
+
+                ArrayRef aref = (ArrayRef) val;
+
+                //get sign of array index
+                Sigma.L indexSign = valueSign(aref.getIndex(), sigmaBefore);
+
+                //negative index for sure
+                if(indexSign == Sigma.L.N){
+                    Utils.reportWarning(u, ErrorMessage.NEGATIVE_INDEX_ERROR);
+                }
+
+                //can be negative index
+                if(indexSign == Sigma.L.Top){
+                    Utils.reportWarning(u, ErrorMessage.POSSIBLE_NEGATIVE_INDEX_WARNING);
+                }
+            }
         }
     }
 
@@ -83,7 +166,21 @@ public class IntraSignAnalysis extends ForwardFlowAnalysis<Unit, Sigma> {
      */
     @Override
     protected void flowThrough(Sigma inValue, Unit unit, Sigma outValue) {
-        // TODO: Implement the flow function
+        //copy over
+        inValue.copy(outValue);
+
+        //if not assignment, continue
+        if (! (unit instanceof DefinitionStmt)){
+            return;
+        }
+
+        DefinitionStmt stmt = (DefinitionStmt) unit;
+
+        Value left = stmt.getLeftOp();
+        Local lhs = (Local) left;
+        Sigma.L rhsSign = valueSign(stmt.getRightOp(), inValue);
+        //join
+        outValue.map.put(lhs, rhsSign);
     }
 
     /**
@@ -94,8 +191,7 @@ public class IntraSignAnalysis extends ForwardFlowAnalysis<Unit, Sigma> {
         if (this.sigma_i != null) {
             return this.sigma_i;
         } else {
-            // TODO: Implement me!
-            return new Sigma();
+            return new Sigma(locals, Sigma.L.Bottom);
         }
     }
 
@@ -104,8 +200,7 @@ public class IntraSignAnalysis extends ForwardFlowAnalysis<Unit, Sigma> {
      */
     @Override
     protected Sigma newInitialFlow() {
-        // TODO: Implement me!
-        return new Sigma();
+        return new Sigma(locals, Sigma.L.Bottom);
     }
 
     /**
@@ -113,7 +208,12 @@ public class IntraSignAnalysis extends ForwardFlowAnalysis<Unit, Sigma> {
      */
     @Override
     protected void merge(Sigma in1, Sigma in2, Sigma out) {
-        // TODO: Implement me!
+        for (Local l : locals){
+            Sigma.L v1 = in1.map.get(l);
+            Sigma.L v2 = in2.map.get(l);
+
+            out.map.put(l, Sigma.join(v1, v2));
+        }
     }
 
     /**
@@ -121,6 +221,6 @@ public class IntraSignAnalysis extends ForwardFlowAnalysis<Unit, Sigma> {
      */
     @Override
     protected void copy(Sigma source, Sigma dest) {
-        // TODO: Implement me!
+        source.copy(dest);
     }
 }
