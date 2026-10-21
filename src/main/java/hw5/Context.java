@@ -29,8 +29,12 @@ public class Context {
      * @return a new context, truncated to length
      */
     public static Context getCtx(SootMethod fn, Context callingCtx, Integer n) {
-        // TODO implement me!
-        List<Integer> newStr = new ArrayList<>();
+        List<Integer> newStr = new ArrayList<>(callingCtx.string);
+        //change the string if it is over the cutoff
+        newStr.add(n);
+        if (newStr.size() > CALL_STRING_CUTOFF){
+            newStr.remove(0);
+        }
         return new Context(fn, newStr);
     }
 
