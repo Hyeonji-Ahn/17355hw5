@@ -10,6 +10,7 @@ import soot.toolkits.graph.ExceptionalUnitGraph;
 import soot.toolkits.graph.MHGDominatorsFinder;
 import soot.toolkits.graph.UnitGraph;
 import soot.toolkits.scalar.ForwardFlowAnalysis;
+import soot.SootMethod;
 
 import soot.jimple.*;
 import soot.Value;
@@ -57,6 +58,20 @@ public class IntraSignAnalysis extends ForwardFlowAnalysis<Unit, Sigma> {
         this.locals.addAll(graph.getBody().getLocals());
     }
 
+    //what each method return
+    public Sigma.L getReturnSign(){
+        Sigma.L res = Sigma.L.Bottom;
+        for(Unit unit : this.graph){
+            if(unit instanceof ReturnStmt){ //if there is return
+                ReturnStmt ret = (ReturnStmt) unit;
+                Sigma before = this.getFlowBefore(unit); 
+                Sigma.L sign = valueSign(ret.getOp(), before);
+                res = Sigma.join(res, sign); //join the ran outcome and before
+            }
+        }
+        return res;
+    }
+
     private Sigma.L valueSign(Value value, Sigma sigma){
         //in integer format. then convert
         if (value instanceof IntConstant){
@@ -67,6 +82,20 @@ public class IntraSignAnalysis extends ForwardFlowAnalysis<Unit, Sigma> {
         //sign is already there. 
         if(value instanceof Local){
             Sigma.L sign = sigma.map.get((Local) value);
+
+            if (sign == null){
+                return Sigma.L.Top;
+            }
+
+            return sign;
+        }
+
+        //sign is reference
+        if(value instanceof ParameterRef){
+            ParameterRef paramRef = (ParameterRef) value;
+
+            Local param = ((UnitGraph)this.graph).getBody().getParameterLocal(paramRef.getIndex());
+            Sigma.L sign = sigma.map.get(param);
 
             if (sign == null){
                 return Sigma.L.Top;
@@ -178,9 +207,64 @@ public class IntraSignAnalysis extends ForwardFlowAnalysis<Unit, Sigma> {
 
         Value left = stmt.getLeftOp();
         Local lhs = (Local) left;
-        Sigma.L rhsSign = valueSign(stmt.getRightOp(), inValue);
+        
+        //recognize what right hand side value was stored as
+        Value right = stmt.getRightOp();
+        Sigma.L rhs;
+        //if there is context regarding right handside
+        if (right instanceof InvokeExpr && ctx != null){
+            InvokeExpr invoke = (InvokeExpr) right;
+            
+            //where is this from
+            SootMethod callee = invoke.getMethod();
+            int callSite = InterSignAnalysis.getInstance().getCallSite(unit);
+            Context calleeCtx = Context.getCtx(callee, ctx, callSite);
+            Sigma calleeIn = new Sigma(callee.getActiveBody().getLocals(), Sigma.L.Bottom);
+
+            //for each argument join everything
+            for (int i=0; i<invoke.getArgCount(); i++){
+                Local param = callee.getActiveBody().getParameterLocal(i);
+                Sigma.L argSign = valueSign(invoke.getArg(i), inValue);
+                calleeIn.map.put(param, argSign);
+            }
+            
+            //what is the context
+            InterSignAnalysis inter = InterSignAnalysis.getInstance();
+            inter.callers.computeIfAbsent(calleeCtx, k -> new HashSet<>()).add(ctx);
+            
+            //if this context never analyzed before
+            if(!inter.results.containsKey(calleeCtx)){
+                Sigma calleeOut = new Sigma(callee.getActiveBody().getLocals(), Sigma.L.Bottom);
+                inter.results.put(calleeCtx, new Summary(calleeIn, calleeOut));
+                inter.worklist.add(calleeCtx);
+            }else{
+                Summary summary = inter.results.get(calleeCtx);
+                //look at all caller that use this
+                boolean changed = false;
+                for (Local l : calleeIn.map.keySet()){
+                    Sigma.L oldV = summary.input.map.get(l);
+                    Sigma.L newV = calleeIn.map.get(l);
+                    Sigma.L joined = Sigma.join(oldV, newV);
+
+                    if (joined != oldV){
+                        summary.input.map.put(l, joined);
+                        changed = true;
+                    }
+                }
+
+                if (changed){
+                    inter.worklist.add(calleeCtx);
+                }
+            }
+            rhs = inter.getReturnSign(calleeCtx);
+
+        } else {
+            //nothing there. same as intraSignAnalysis
+            rhs = valueSign(right, inValue);
+        }
+
         //join
-        outValue.map.put(lhs, rhsSign);
+        outValue.map.put(lhs, rhs);
     }
 
     /**
